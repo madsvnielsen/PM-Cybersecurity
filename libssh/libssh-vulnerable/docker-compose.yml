@@ -1,0 +1,6 @@
+services:
+ sshd:
+   build: ./libsshvul
+   image: libssh-session-logging:0.8.1
+   ports:
+    - "2222:22"

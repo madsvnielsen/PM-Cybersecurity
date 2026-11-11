@@ -1,0 +1,153 @@
+--- ssh_server_fork.c
++++ ssh_server_fork_logging.c
+@@ -38,6 +38,7 @@
+ #include <sys/ioctl.h>
+ #include <sys/wait.h>
+ #include <stdio.h>
++#include "session_logging.h"
+ 
+ #ifndef KEYS_FOLDER
+ #ifdef _WIN32
+@@ -270,7 +271,7 @@
+ 
+     if (openpty(&cdata->pty_master, &cdata->pty_slave, NULL, NULL,
+                 cdata->winsize) != 0) {
+-        fprintf(stderr, "Failed to open pty\n");
++        session_logging_error("Failed to open pty\n");
+         return SSH_ERROR;
+     }
+     return SSH_OK;
+@@ -301,7 +302,7 @@
+         case -1:
+             close(cdata->pty_master);
+             close(cdata->pty_slave);
+-            fprintf(stderr, "Failed to fork\n");
++            session_logging_error("Failed to fork\n");
+             return SSH_ERROR;
+         case 0:
+             close(cdata->pty_master);
+@@ -426,10 +427,12 @@
+     (void) session;
+ 
+     if (strcmp(user, USER) == 0 && strcmp(pass, PASS) == 0) {
++        session_logging_event("Password authentication succeeded");
+         sdata->authenticated = 1;
+         return SSH_AUTH_SUCCESS;
+     }
+ 
++    session_logging_event("Password authentication failed");
+     sdata->auth_attempts++;
+     return SSH_AUTH_DENIED;
+ }
+@@ -523,7 +526,7 @@
+     ssh_set_server_callbacks(session, &server_cb);
+ 
+     if (ssh_handle_key_exchange(session) != SSH_OK) {
+-        fprintf(stderr, "%s\n", ssh_get_error(session));
++        session_logging_error("%s\n", ssh_get_error(session));
+         return;
+     }
+ 
+@@ -539,7 +542,7 @@
+         }
+ 
+         if (ssh_event_dopoll(event, 100) == SSH_ERROR) {
+-            fprintf(stderr, "%s\n", ssh_get_error(session));
++            session_logging_error("%s\n", ssh_get_error(session));
+             return;
+         }
+         n++;
+@@ -565,7 +568,7 @@
+         if (cdata.child_stdout != -1) {
+             if (ssh_event_add_fd(event, cdata.child_stdout, POLLIN, process_stdout,
+                                  sdata.channel) != SSH_OK) {
+-                fprintf(stderr, "Failed to register stdout to poll context\n");
++                session_logging_error("Failed to register stdout to poll context\n");
+                 ssh_channel_close(sdata.channel);
+             }
+         }
+@@ -574,7 +577,7 @@
+         if (cdata.child_stderr != -1){
+             if (ssh_event_add_fd(event, cdata.child_stderr, POLLIN, process_stderr,
+                                  sdata.channel) != SSH_OK) {
+-                fprintf(stderr, "Failed to register stderr to poll context\n");
++                session_logging_error("Failed to register stderr to poll context\n");
+                 ssh_channel_close(sdata.channel);
+             }
+         }
+@@ -628,19 +631,24 @@
+     sigemptyset(&sa.sa_mask);
+     sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+     if (sigaction(SIGCHLD, &sa, NULL) != 0) {
+-        fprintf(stderr, "Failed to register SIGCHLD handler\n");
++        session_logging_error("Failed to register SIGCHLD handler\n");
+         return 1;
+     }
+ 
+     rc = ssh_init();
+     if (rc < 0) {
+-        fprintf(stderr, "ssh_init failed\n");
++        session_logging_error("ssh_init failed\n");
++        return 1;
++    }
++
++    if (session_logging_init() != SSH_OK) {
++        session_logging_error("Failed to initialize session logging\n");
+         return 1;
+     }
+ 
+     sshbind = ssh_bind_new();
+     if (sshbind == NULL) {
+-        fprintf(stderr, "ssh_bind_new failed\n");
++        session_logging_error("ssh_bind_new failed\n");
+         return 1;
+     }
+ 
+@@ -654,21 +662,23 @@
+ #endif /* HAVE_ARGP_H */
+ 
+     if(ssh_bind_listen(sshbind) < 0) {
+-        fprintf(stderr, "%s\n", ssh_get_error(sshbind));
++        session_logging_error("%s\n", ssh_get_error(sshbind));
+         return 1;
+     }
+ 
+     while (1) {
+         session = ssh_new();
+         if (session == NULL) {
+-            fprintf(stderr, "Failed to allocate session\n");
++            session_logging_error("Failed to allocate session\n");
+             continue;
+         }
+ 
++        session_logging_next_case();
+         /* Blocks until there is a new incoming connection. */
+         if(ssh_bind_accept(sshbind, session) != SSH_ERROR) {
+             switch(fork()) {
+                 case 0:
++                    session_logging_event("Session started");
+                     /* Remove the SIGCHLD handler inherited from parent. */
+                     sa.sa_handler = SIG_DFL;
+                     sigaction(SIGCHLD, &sa, NULL);
+@@ -683,17 +693,18 @@
+                         handle_session(event, session);
+                         ssh_event_free(event);
+                     } else {
+-                        fprintf(stderr, "Could not create polling context\n");
++                        session_logging_error("Could not create polling context\n");
+                     }
+                     ssh_disconnect(session);
+                     ssh_free(session);
++                    session_logging_event("Session ended");
+ 
+                     exit(0);
+                 case -1:
+-                    fprintf(stderr, "Failed to fork\n");
++                    session_logging_error("Failed to fork\n");
+             }
+         } else {
+-            fprintf(stderr, "%s\n", ssh_get_error(sshbind));
++            session_logging_error("%s\n", ssh_get_error(sshbind));
+         }
+         /* Since the session has been passed to a child fork, do some cleaning
+          * up at the parent process. */

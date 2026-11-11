@@ -1,0 +1,13 @@
+#build and start the container with session identifiers
+docker compose build sshd
+docker compose up -d sshd
+
+#get log (from now; run in a separate terminal before connecting)
+docker compose logs --no-color --timestamps --follow --tail=0 sshd |
+  Tee-Object -FilePath libssh-sessions.log
+
+#normal
+ssh -p 2222 -o HostKeyAlgorithms=+ssh-rsa myuser@localhost
+
+#exploit
+python exploit.py 127.0.0.1 2222 "whoami"
